@@ -1,0 +1,15 @@
+# 数据库文件
+Data/data.db
+
+# Python 缓存
+__pycache__/
+*.py[cod]
+*$py.class
+
+# 虚拟环境
+venv/
+env/
+
+# IDE
+.idea/
+.vscode/
