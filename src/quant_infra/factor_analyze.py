@@ -19,13 +19,14 @@ import itertools
 from pathlib import Path
 from datetime import datetime
 
-def specific_group(fac, stk, group_set):
+def specific_group(fac, stk, group_set,bench_index):
     """
     对特定分组进行评估，后续使用Joblib并行回测
     Args:
         fac: 因子数据 ['date','factor','ts_code','trade_date']
         stk: 股票数据 ['date','ret','ts_code','trade_date']
         group_set: 分组集合设定，形如('全市场','日度')
+        bench_index: 基准指数代码
     Returns:
         分组收益、多空收益、IC、IR、Sharpe
     """
@@ -86,6 +87,22 @@ def specific_group(fac, stk, group_set):
         # 4. 计算下一周期的收益（Look-ahead return）
         next_ret_col = f"next_ret_{p_freq}"
         stk_p[next_ret_col] = stk_p.groupby("ts_code")[ret_col].shift(-1)
+
+    else:
+        # 日度：数据本身已是日频，无需聚合
+        period_col = 'date_D'
+        ret_col = 'ret'
+        fac_col = 'factor'
+        next_ret_col = 'next_ret_D'
+
+        stk[period_col] = stk['date'].dt.to_period('D')
+        fac[period_col] = fac['date'].dt.to_period('D')
+
+        fac_p = fac.sort_values(['ts_code', 'trade_date'], inplace=False)
+        stk_p = stk.sort_values(['ts_code', 'trade_date'], inplace=False)
+
+        # 计算下一个交易日的收益（shift 按实际交易日顺序，不会跨过非交易日）
+        stk_p[next_ret_col] = stk_p.groupby('ts_code')[ret_col].shift(-1)
 
     # 合并因子和收益数据（用于IC计算）
     # 用 period_col 做合并键——双方通过同一 Period 对齐，避免 trade_date 细微差异导致大量丢失
@@ -173,6 +190,11 @@ def specific_group(fac, stk, group_set):
         group_ret=('daily_ret', 'sum')
     )
 
+    bench = get_index_data(bench_index)
+    bench['bench_ret'] = bench['pct_chg'] / 100.0
+    # 提取所有自带日频收益率的股票明细
+    daily_ls = daily_ls.merge(bench[["trade_date", "bench_ret"]], on=['trade_date'], how='inner')
+
     # 组装为一个扁平的字典，便于最后在 joblib 中直接 pd.DataFrame(results) 组合成一张大表
     result_dict = {
         '样本': group_set[0],
@@ -180,7 +202,7 @@ def specific_group(fac, stk, group_set):
         'IC': round(IC, 2),
         'IR': round(IR, 2),
         'SR': round(SR, 2),
-        'daily_ls': daily_ls[['trade_date', 'ls_ret', 'long', 'short']] # 同时存储多空收益和纯多头、纯空头收益
+        'daily_ls': daily_ls[['trade_date', 'ls_ret', 'long', 'short', 'bench_ret']] # 同时存储多空收益和纯多头、纯空头收益
     }
 
     # 将各分组平均收益也加入上述字典
@@ -189,7 +211,7 @@ def specific_group(fac, stk, group_set):
         
     return result_dict
 
-def evaluate_factor(factor_table, fac_freq, bench_index='000002.SH'):
+def evaluate_factor(factor_table, fac_freq, bench_index='000002.SH',other_name=None):
     """
     因子评估主流程
     
@@ -202,9 +224,12 @@ def evaluate_factor(factor_table, fac_freq, bench_index='000002.SH'):
         factor_table(str): 因子表名（DuckDB中的表名，如'week_factor'）
         fac_freq(str): 因子的频率
         bench_index(str): 基准指数代码（默认'000002.SH'，全A指数）
+        other_name(str): 因子列的原始名称（默认None，如果提供则重命名为'factor'）
     """    
     try:
         fac = db_utils.read_sql(f"SELECT * FROM {factor_table}")
+        if other_name:
+            fac.rename(columns={other_name: "factor"}, inplace=True)
 
         # trade_date可能是整数，需要转为字符串后再转为日期
         fac["date"] = pd.to_datetime(fac["trade_date"].astype(str), format="%Y%m%d", errors="coerce")
@@ -233,7 +258,7 @@ def evaluate_factor(factor_table, fac_freq, bench_index='000002.SH'):
 
     print("开始评估因子在不同样本和频率下的表现...")
     results = Parallel(n_jobs=-1)(
-        delayed(specific_group)(fac, stk, combination) for combination in combinations
+        delayed(specific_group)(fac, stk, combination,bench_index) for combination in combinations
     )
     results = pd.DataFrame(results)
     
@@ -267,20 +292,23 @@ def group_plot(sample, freq, line, factor_table):
     plt.rcParams['axes.unicode_minus'] = False    # 用来正常显示负号
     try:
         df = db_utils.read_sql(f"""
-            SELECT trade_date, {line} FROM {factor_table}_daily_ls
+            SELECT trade_date, {line}, bench_ret FROM {factor_table}_daily_ls
             WHERE 样本 = '{sample}' AND 频率 = '{freq}'
             ORDER BY trade_date
         """)
         df['trade_date'] = pd.to_datetime(df['trade_date'].astype(str), format='%Y%m%d', errors='coerce')
         df[line] = winsorize(df[line], n=3)
         df['cumulative_ret'] = df[line].cumsum()
+        df['cumulative_bench'] = df['bench_ret'].cumsum()
 
 
         plt.figure(figsize=(12, 6))
         plt.plot(df['trade_date'], df['cumulative_ret'], label=f'{sample} - {freq}', color='blue')
+        plt.plot(df['trade_date'], df['cumulative_bench'], label=f'基准收益', color='red')
+
         plt.title(f'{sample} - {freq} {line}收益净值曲线')
         plt.xlabel('日期')
-        plt.ylabel(f'累计{line}收益率')
+        plt.ylabel(f'累计收益率')
         plt.legend()
         plt.grid()
         plt.tight_layout()

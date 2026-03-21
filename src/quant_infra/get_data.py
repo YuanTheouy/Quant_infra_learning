@@ -125,14 +125,15 @@ def get_index_data(index_code):
     #获取下载日期范围
     dates_to_download = get_dates_todo('index_data', ts_code=index_code)
     if not dates_to_download:
-        print("数据已是最新")
-        return 
-        
-    pro = _get_pro_client()
-    df = pro.index_daily(ts_code=index_code, start_date=dates_to_download[0], end_date=dates_to_download[-1])
-    if df is not None and not df.empty:
-        db_utils.write_to_db(df, 'index_data', save_mode='append')
-    return df   
+        return db_utils.read_sql(f"SELECT * FROM index_data WHERE ts_code='{index_code}'")
+    
+    else:
+        pro = _get_pro_client()
+        df = pro.index_daily(ts_code=index_code, start_date=dates_to_download[0], end_date=dates_to_download[-1])
+        if df is not None and not df.empty:
+            db_utils.write_to_db(df, 'index_data', save_mode='append')
+        index_df = db_utils.read_sql(f"SELECT * FROM index_data WHERE ts_code='{index_code}'")
+        return index_df
 
 def get_dates_todo(table_name,ts_code=None):
     """
