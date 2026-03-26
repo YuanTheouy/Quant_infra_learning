@@ -299,29 +299,27 @@ def evaluate_factor(factor_table, fac_freq, bench_index='000002.SH', other_name=
 
     print(f'因子评估完成，结果已保存到 {output_path}/')
     
-def group_plot(sample, freq, line, factor_table):
-    """绘制特定样本和频率的多空收益净值曲线及IC序列"""
-    # 设置matplotlib支持中文字体
-    plt.rcParams['font.sans-serif'] = ['Microsoft YaHei']  # 用来正常显示中文标签
-    plt.rcParams['axes.unicode_minus'] = False    # 用来正常显示负号
+def group_plot(sample, freq, line, factor_table, mode='evaluate'):
+    """绘制特定样本和频率的多空收益净值曲线及IC序列
+
+    Args:
+        mode: 'evaluate' 读 {factor_table}_daily_ls，含 IC 子图；
+              'trade'    读 {factor_table}_trade_daily_ret，不含 IC 子图
+    """
+    plt.rcParams['font.sans-serif'] = ['Microsoft YaHei']
+    plt.rcParams['axes.unicode_minus'] = False
     try:
+        tbl_name = f"{factor_table}_trade_daily_ret" if mode == 'trade' else f"{factor_table}_daily_ls"
+
         df = db_utils.read_sql(f"""
-            SELECT trade_date, {line}, bench_ret FROM {factor_table}_daily_ls
+            SELECT trade_date, {line}, bench_ret FROM {tbl_name}
             WHERE 样本 = '{sample}' AND 频率 = '{freq}'
             ORDER BY trade_date
         """)
         df['trade_date'] = pd.to_datetime(df['trade_date'].astype(str), format='%Y%m%d', errors='coerce')
         df[line] = winsorize(df[line], n=3)
-        # 累积净值，起始为 1
         df['net_value'] = (1 + df[line]).cumprod()
         df['net_value_bench'] = (1 + df['bench_ret']).cumprod()
-
-        ic_df = db_utils.read_sql(f"""
-            SELECT trade_date, ic FROM {factor_table}_ic_series
-            WHERE 样本 = '{sample}' AND 频率 = '{freq}'
-            ORDER BY trade_date
-        """)
-        ic_df['trade_date'] = pd.to_datetime(ic_df['trade_date'].astype(str), format='%Y%m%d', errors='coerce')
 
         # --- 计算绩效指标 ---
         line_ret = df[line].dropna()
@@ -340,8 +338,12 @@ def group_plot(sample, freq, line, factor_table):
         vol_str        = f"{round(vol * 100, 2)}%"
         max_dd_str     = f"{round(max_dd * 100, 2)}%"
 
-        fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(12, 11),
-                                             gridspec_kw={'height_ratios': [1.5, 1, 0.25]})
+        if mode == 'trade':
+            fig, (ax1, ax3) = plt.subplots(2, 1, figsize=(12, 7),
+                                           gridspec_kw={'height_ratios': [2, 0.25]})
+        else:
+            fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(12, 11),
+                                                gridspec_kw={'height_ratios': [1.5, 1, 0.25]})
 
         # 上图：净值曲线，起始为 1；副坐标轴显示策略/基准相对净值
         ax1.plot(df['trade_date'], df['net_value'], label=f'{sample} - {freq}', color='blue')
@@ -358,17 +360,23 @@ def group_plot(sample, freq, line, factor_table):
         ax1_r.set_ylabel('相对净值')
         ax1_r.legend(loc='upper right')
 
-        # 下图：IC序列柱状图（正值红色，负值绿色）
-        ic_mean = ic_df['ic'].mean()
-        colors = ['red' if v >= 0 else 'green' for v in ic_df['ic']]
-        ax2.bar(ic_df['trade_date'], ic_df['ic'], color=colors, width=15, label='IC')
-        ax2.axhline(ic_mean, color='black', linestyle='--', linewidth=1, label=f'均值 {ic_mean:.3f}')
-        ax2.axhline(0, color='gray', linestyle='-', linewidth=0.8)
-        ax2.set_title(f'{sample} - {freq} IC序列')
-        ax2.set_xlabel('日期')
-        ax2.set_ylabel('IC')
-        ax2.legend()
-        ax2.grid(axis='y')
+        if mode != 'trade':
+            ic_df = db_utils.read_sql(f"""
+                SELECT trade_date, ic FROM {factor_table}_ic_series
+                WHERE 样本 = '{sample}' AND 频率 = '{freq}'
+                ORDER BY trade_date
+            """)
+            ic_df['trade_date'] = pd.to_datetime(ic_df['trade_date'].astype(str), format='%Y%m%d', errors='coerce')
+            ic_mean = ic_df['ic'].mean()
+            colors = ['red' if v >= 0 else 'green' for v in ic_df['ic']]
+            ax2.bar(ic_df['trade_date'], ic_df['ic'], color=colors, width=15, label='IC')
+            ax2.axhline(ic_mean, color='black', linestyle='--', linewidth=1, label=f'均值 {ic_mean:.3f}')
+            ax2.axhline(0, color='gray', linestyle='-', linewidth=0.8)
+            ax2.set_title(f'{sample} - {freq} IC序列')
+            ax2.set_xlabel('日期')
+            ax2.set_ylabel('IC')
+            ax2.legend()
+            ax2.grid(axis='y')
 
         # 底部：绩效指标表格
         ax3.axis('off')
@@ -387,7 +395,7 @@ def group_plot(sample, freq, line, factor_table):
         output_path = Path("factor_mining") / factor_table / "output"
         output_path.mkdir(parents=True, exist_ok=True)
 
-        plt.savefig(output_path / f'{sample}_{freq}_{line}_curve.png')
+        plt.savefig(output_path / f'{sample}_{freq}_{line}_{mode}_curve.png')
         plt.close()
 
     except Exception as e:
