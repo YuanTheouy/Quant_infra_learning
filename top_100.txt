@@ -1,0 +1,100 @@
+﻿# -*- coding: utf-8 -*-
+"""
+鍥犲瓙鍒嗘瀽妯″潡 - IC璁＄畻銆佸垎缁勫垎鏋愩€佸洖娴?
+鏀寔浣跨敤DuckDB鏁版嵁搴撹€屼笉鏄洿鎺ヨ鍙朇SV鏂囦欢
+"""
+
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from joblib import Parallel, delayed
+from quant_infra import db_utils
+from quant_infra.const import *
+from quant_infra.get_data import get_ins, get_index_data
+from quant_infra.factor_calc import winsorize
+import itertools
+from pathlib import Path
+from tqdm import tqdm
+
+def calc_ic(df, fac_col, ret_col):
+    """
+    璁＄畻鍥犲瓙鐨処C
+    Args:
+        df: 鍚堝苟鍥犲瓙鍜屾敹鐩婂悗鐨勫洜瀛愭暟鎹?DataFrame
+        fac_col: 鍥犲瓙鍒楀悕
+        ret_col: 鏀剁泭鍒楀悕
+    Returns:
+        IC DataFrame锛屽垪鍚嶄负 ['trade_date', 'ic']
+    """
+    # 1. [鍏抽敭姝 杞崲鎴愰暱琛細鏃ユ湡涓鸿锛岃偂绁ㄤ负鍒?
+    # 杩欎竴姝?Pandas 浼氬湪搴曞眰涓€娆℃€у畬鎴愮储寮曢噸鎺掞紝閫熷害鏋佸揩
+    fac_wide = df.pivot(index='trade_date', columns='ts_code', values=fac_col)
+    ret_wide = df.pivot(index='trade_date', columns='ts_code', values=ret_col)
+    
+    # 2. 鍚戦噺鍖栬绠楁帓鍚?(Spearman 鐨勬湰璐?
+    # axis=1 琛ㄧず鍦ㄦ瘡涓€澶╋紙琛岋級鍐呴儴杩涜鎺掑悕锛宲ct=True 杞寲涓虹櫨鍒嗘瘮鎺掑悕
+    fac_rank = fac_wide.rank(axis=1, pct=True)
+    ret_rank = ret_wide.rank(axis=1, pct=True)
+    
+    # 3. 鍚戦噺鍖栬绠?Pearson 鐩稿叧绯绘暟 (鎺掑悕鍚庣殑 Pearson 灏辨槸 Spearman)
+    # corrwith 浼氳嚜鍔ㄥ榻愭棩鏈燂紝鎸夎璁＄畻涓や釜鐭╅樀鐨勭浉鍏虫€?
+    ic_series = fac_rank.corrwith(ret_rank, axis=1)
+    
+    # 4. 鏁寸悊缁撴灉
+    # 璁＄畻姣忎竴琛岄潪绌哄€肩殑鏁伴噺锛堝嵆姣忓ぉ鏈夊灏戝彧鑲＄エ鍙備笌璁＄畻锛?
+    stock_counts = fac_wide.notnull().sum(axis=1)
+    # 鐩存帴杩囨护 IC 搴忓垪
+    ic_series = ic_series[stock_counts > MIN_IC_SIZE]
+
+    ic_df = ic_series.reset_index()
+    ic_df.columns = ['trade_date', 'ic']
+
+    return ic_df
+
+    
+def specific_group(fac, stk, group_set, bench_df, n_groups=10, pathway_delay=0, trade_days=None):
+    """
+    瀵圭壒瀹氬垎缁勮繘琛岃瘎浼帮紝鍚庣画浣跨敤Joblib骞惰鍥炴祴
+    涓嶅悓棰戠巼涓嬶紝鍙槸绠€鍗曞湴鍙栧綋鏈熷洜瀛愬€肩殑鏈€鍚庝竴涓€艰繘琛屽垎缁勮皟浠撱€?
+    Args:
+        fac: 宸叉寜鏍锋湰杩囨护骞舵帓搴忕殑鍥犲瓙鏁版嵁 ['date','factor','ts_code','trade_date']
+        stk: 宸叉寜鏍锋湰杩囨护骞舵帓搴忕殑鑲＄エ鏁版嵁 ['date','ret','ts_code','trade_date']
+        group_set: 鍒嗙粍闆嗗悎璁惧畾锛屽舰濡?'鍏ㄥ競鍦?,'鏃ュ害')
+        bench_df: 鍩哄噯鎸囨暟鏃ユ敹鐩?DataFrame锛屽垪涓?['trade_date', 'bench_ret']
+        pathway_delay: 杞ㄩ亾寤惰繜閲忥紙浜ゆ槗鏃ユ暟锛夛紝榛樿0琛ㄧず涓嶅欢杩?
+        trade_days: 鍏ㄩ儴浜ゆ槗鏃ョ殑鏈夊簭鏁扮粍锛宲athway_delay>0鏃跺繀椤绘彁渚?
+        
+    Returns:
+        鍒嗙粍鏀剁泭銆佸绌烘敹鐩娿€両C銆両R銆丼harpe
+    """
+    # fac/stk 宸插湪 evaluate_factor 涓寜鏍锋湰杩囨护骞堕鎺掑簭锛屾澶勬棤闇€閲嶅鎿嶄綔
+
+    # 杞ㄩ亾寤惰繜锛氬皢鏃ユ湡鍓嶇Щ pathway_delay 涓氦鏄撴棩鍚庡啀鍒掑垎鍛ㄦ湡锛岀瓑鏁堜簬灏嗚皟浠撹竟鐣屽悗绉?
+    if pathway_delay > 0 and trade_days is not None:
+        # 閫氳繃鏀瑰啓鏃ユ湡瀹炵幇鎺ㄨ繜璋冧粨銆備緥濡傦細
+        # trade_days = [3-01, 3-02, 3-03], delay = 1
+        # idx_arr = [0, 0, 1], _shift_map = {3-01:3-01, 3-02:3-01, 3-03:3-02}
+        # 缁撴灉锛氬師鏈?-02鐨勬暟鎹吉瑁呮垚浜?-01锛屽師鏈?-03鐨勪吉瑁呮垚浜?-02銆?
+        # 鍚庣画鎸夋湀鎴栧懆鍒掑垎Period鏃讹紝鍘熸湰鍦?-01瑙﹀彂鐨勮竟鐣屼細鍥犱负鏃ユ湡鈥滃悕涔変笂鍓嶇Щ鈥濊€屾帹杩熷埌3-02鎵嶈Е鍙戙€?
+        n_td = len(trade_days)
+        idx_arr = np.clip(np.arange(n_td) - pathway_delay, 0, n_td - 1) 
+        _shift_map = pd.Series(trade_days[idx_arr], index=pd.DatetimeIndex(trade_days))
+        fac_pdate = fac['date'].map(_shift_map)  ## 鐩存帴淇敼鏃ユ湡鍒楋紝杩欐牱fac涓巗tk鐨勬棩鏈熼兘琚粺涓€鍋忕Щ浜嗭紝鍚庣画鐨勫懆鏈熷垝鍒嗚嚜鐒跺氨鍚庣Щ浜?
+        stk_pdate = stk['date'].map(_shift_map)
+    else:
+        fac_pdate = fac['date']
+        stk_pdate = stk['date']
+
+    # 闈炴棩棰戠殑鏀剁泭鐜囪鎻愬墠璁＄畻銆傝繖鏄负浜嗚绠楀悗闈㈢殑IC锛屽繀椤诲鍏跺洜瀛愬拰鑲＄エ鐨勯鐜囥€傚鏋滄槸涓轰簡鐢绘敹鐩婄巼鍥撅紝涓嶇敤杩欓儴鍒?
+    if group_set[1] != '鏃ュ害':
+        # 1. 鑾峰彇瀵瑰簲鐨?Pandas 棰戠巼缂╁啓锛堝 'W', 'M'锛?
+        p_freq = FREQ_MAP.get(group_set[1])
+        if not p_freq:
+            raise ValueError(f"涓嶆敮鎸佺殑棰戠巼: {group_set[1]}")
+
+        # 2. 鐢熸垚鍛ㄦ湡鏍囩鍒?
+        period_col = f"date_{p_freq}"
+        ret_col = f"ret_{p_freq}"
+        fac_col = f"factor_{p_freq}"
+        stk[period_col] = stk_pdate.dt.to_period(p_freq)

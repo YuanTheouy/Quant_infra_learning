@@ -213,9 +213,9 @@ def _compute_portfolio_daily_ret(stk_df, holdings, period_col, commission_rate, 
     prev_set: set = set()
     result_rows = []
 
-    for hold_period in sorted_periods:
+    for hold_period in sorted_periods: # 按换仓周期顺序处理
         curr_set = set(holdings[hold_period])
-        if not curr_set:
+        if not curr_set:  ## 无持仓
             prev_set = curr_set
             continue
 
@@ -226,8 +226,8 @@ def _compute_portfolio_daily_ret(stk_df, holdings, period_col, commission_rate, 
         else:
             n_prev = len(prev_set)
             n_curr = len(curr_set)
-            sold = prev_set - curr_set
-            bought = curr_set - prev_set
+            sold = prev_set - curr_set  #在prev中，减掉prev和curr的交集，剩下的就是卖出的股票
+            bought = curr_set - prev_set  #在curr中，减掉prev和curr的交集，剩下的就是买入的股票
             sell_frac = len(sold) / n_prev if n_prev > 0 else 0.0
             buy_frac = len(bought) / n_curr if n_curr > 0 else 0.0
             cost = (sell_frac + buy_frac) * (slippage_rate + commission_rate)
