@@ -238,12 +238,13 @@ def specific_group(fac, stk, group_set, bench_df, n_groups=10, pathway_delay=0, 
         
     return result_dict
 
-def prepare_evaluate_data(factor_table, freq, bench_index='000002.SH', other_name=None, samples=None):
+def prepare_evaluate_data(factor_table, freq=None, bench_index='000002.SH', trade_freq = None, other_name=None, samples=None):
     """因子评估数据预处理（加载因子/行情/基准，过滤样本与调仓频率）
 
     Args:
         factor_table(str): 因子表名，如 'spec_vol',数据库中存储的表名必须和factor_mining下对应的因子文件夹名一致
         freq(str): 在evaluate_factor中指因子本来的频率，用于检验比因子更低频的调仓频率的回测表现；
+        trade_freq(str): 调仓频率，如 '日度'、'周度'、'月度'
         在evaluate_pathway中指调仓频率（如 '日度'、'周度'、'月度'），为了观察具体几号调仓是否对结果有极大影响
         other_name(str): 如果因子表中列名不是默认的 'factor'，则需要指定
         samples(str or list): 指定样本，如 '全市场' 或 ['中证800', '全市场']，默认None表示全部样本。
@@ -277,11 +278,12 @@ def prepare_evaluate_data(factor_table, freq, bench_index='000002.SH', other_nam
         # 直接固定为单一 (sample, trade_freq) 组合，跳过笛卡尔积
         combinations = [(s, trade_freq) for s in active_samples]
     else:
+        # 如果trade_freq 未指定，则根据因子频率freq进行多频率遍历
         freq_priority = {'日度': 1, '周度': 2, '月度': 3}
-        ## 只保留 fac_freq 及以上频率
+        ## 只保留 freq 及以上频率
         valid_freqs = {
             name: code for name, code in FREQ_MAP.items()
-            if freq_priority.get(name, 99) >= freq_priority.get(fac_freq, 0)
+            if freq_priority.get(name, 99) >= freq_priority.get(freq, 0)
         }
         combinations = list(itertools.product(active_samples, valid_freqs)) # 生成 (sample, freq) 的笛卡尔积组合列表
 
@@ -325,7 +327,7 @@ def evaluate_factor(factor_table, fac_freq, bench_index='000002.SH', other_name=
         samples(list|str|None): 限定回测的样本，如 '全市场' 或 ['全市场','中证1000']，默认None表示全部
         n_groups(int): 分组组数（默认10组）
     """
-    prepared = prepare_evaluate_data(factor_table, fac_freq, bench_index, other_name, samples)
+    prepared = prepare_evaluate_data(factor_table=factor_table, freq=fac_freq, bench_index=bench_index, other_name=other_name, samples=samples)  # 这里不传trade_freq，表示在prepare_evaluate_data中不限定频率，进行多频率准备，具体评估时再根据组合设定进行选择
     if prepared is None:
         return None
     sample_fac, sample_stk, bench_df, combinations, _ = prepared
@@ -393,7 +395,7 @@ def evaluate_factor_pathways(factor_table, trade_freq, n_pathways, line, sample=
     Returns:
         pd.DataFrame: pathway_summary
     """
-    prepared = prepare_evaluate_data(factor_table, trade_freq, bench_index, other_name, samples=sample)
+    prepared = prepare_evaluate_data(factor_table=factor_table, trade_freq=trade_freq, bench_index=bench_index, other_name=other_name, samples=sample)
     if prepared is None:
         return None
     sample_fac, sample_stk, bench_df, combinations, trade_days = prepared

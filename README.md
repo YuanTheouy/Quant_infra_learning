@@ -1,10 +1,37 @@
 # quant_infra — 量化基础框架
 
-`quant_infra` 是一套基于**Tushare**数据源且面向 A 股量化研究的基础设施库，提供从数据入库、因子预处理到因子评估的完整流水线。所有行情数据以 **DuckDB** 本地数据库存储，避免对大 CSV 文件的反复读写；核心计算任务通过 **joblib** 多进程并行加速。
 ---
- ## 获取示例因子
- 本仓库使用 Git Submodule 管理因子库。克隆时强烈建议执行 `git clone --recursive`以获得示例因子。如已克隆，请执行 `git submodule update --init --recursive`。
- 如不需要示例因子，请执行`git clone https://github.com/ShenzhenLime/quant.git`
+## 📖 写在前面
+> **熙熙攘攘，皆为利往，安于传道，能有几何？**
+>
+> 恰逢大一暑假，我看到油管上一个介绍 AI 量化交易的视频，便觉得量化很有意思。**让电脑交易，自己坐享其成，岂不美哉？** 然而初次的尝试却在各种环境配置、接口选择上接连碰壁，无奈之下，只好放弃。
+>
+> 一年之后，学院的《量化投资》课程给了我重操旧业的机会。在专业平台的助力下，我能花上几个周末的时间来学习研究，却未曾感到疲惫。也是在那时，通过几期视频，我便掌握了 SQL、Pandas的基础语法，也入门了机器学习。由此感慨，**量化并非深不可测，许多人只是被那些晦涩的技术名词挡在了门外。**
+>
+> 课程结束以后，我决定脱离云平台，尝试在本地搭建一套完整的量化环境。在这个过程中，又继续不断摸索，在数据下载、处理上掉了不少坑，最终整个环境才初具雏形。回想起这一路的不易，我便决定将搭建的这个环境在 GitHub 上免费地分享出来。我相信，这个项目能让更多想入门的朋友少走弯路，**从第一行成功返回的数据开始，感受量化的魅力** 。
+
+---
+
+
+`src/quant_infra` 是一套基于 **Tushare** 数据源、面向 A 股量化研究的基础设施库，提供从数据入库、因子预处理到因子评估、模拟交易的完整代码。所有行情数据以 **DuckDB** 本地数据库存储，避免对大 CSV 文件的反复读写；核心计算任务通过 **Joblib** 并行加速。
+
+---
+
+## 获取示例因子
+
+本仓库使用 **Git Submodule** 管理因子库，克隆时请根据需要选择以下方式：
+
+```bash
+# 推荐：同时获取示例因子
+git clone --recursive https://github.com/ShenzhenLime/quant.git
+
+# 已克隆但尚未初始化子模块
+git submodule update --init --recursive
+
+# 不需要示例因子
+git clone https://github.com/ShenzhenLime/quant.git
+```
+
 ---
 ## 量化真经
 - 打板策略不可信，实际交易时，根本不可能以开盘价或前一日收盘价成交。更专业的来说：**没有考虑滑点**。
@@ -24,7 +51,8 @@ src/quant_infra/
 ├── db_utils.py       # DuckDB 读写工具
 ├── get_data.py       # 行情 & 基本面数据多进程获取（Tushare）
 ├── factor_calc.py    # 定价因子 & 残差收益计算
-└── factor_analyze.py # 因子评估 & 可视化
+├── factor_analyze.py # 因子评估 & 可视化
+└── trade.py          # 真实交易模拟回测（含手续费 & 滑点）
 ```
 
 ---
@@ -54,7 +82,7 @@ src/quant_infra/
 
 ### `get_data.py` — 数据获取
 
-通过 **Tushare Pro** 接口下载数据并持久化到 DuckDB。Token 从环境变量 `TB_TOKEN` 读取，**不硬编码**于代码中。
+通过 **Tushare Pro** 接口下载数据并持久化到 DuckDB。Token 从环境变量 `TS_TOKEN` 读取，**不硬编码**于代码中。
 
 #### 增量更新机制
 
@@ -101,7 +129,7 @@ src/quant_infra/
 
 #### 3. 去极值（`winsorize(series, n=3)`）
 
-按 n 倍标准差对序列上下截尾，用于压制异常值对因子分析的干扰。
+按 n 倍标准差对序列上下缩尾，用于压制异常值对因子分析的干扰。
 
 ---
 
@@ -123,9 +151,51 @@ src/quant_infra/
 汇总指标保存至 `factor_mining/{factor_table}/output/summary.csv`，日度多空收益序列写入 DuckDB 的 `{factor_table}_daily_ls` 表。
 
 
-#### `group_plot(sample, freq, line, factor_table)`
+#### `group_plot(sample, freq, line, factor_table, mode)`
 
-从 DuckDB 读取指定样本 & 频率的日度收益序列，绘制**累计净值曲线**并保存为 PNG，支持多空收益（`ls_ret`）、纯多头（`long`）、纯空头（`short`）三条线可选。
+从 DuckDB 读取指定样本 & 频率的日度收益序列，绘制**累计净值曲线**并保存为 PNG。
+
+| `mode` 参数 | 读取的 DuckDB 表 | 可选 `line` |
+|-------------|----------------|------------|
+| `'evaluate'`（默认）| `{factor_table}_daily_ls` | `ls_ret` / `long` / `short` |
+| `'trade'` | `{factor_table}_trade_daily_ret` | `long` |
+| `'pathway'` | `{factor_table}_pathway_daily_ls` | `ls_ret` / `long` / `short` |
+
+---
+
+### `trade.py` — 交易模拟
+
+#### `simulate_trade(factor_table, trade_freq, ...)`
+
+真实交易模拟回测，评价因子对头部股票的选股能力。相比 `factor_analyze` 中的等权分组回测，本模块更贴近实盘，具体增加了：
+
+- **手续费 + 滑点**：双边计算，默认单边万 2.5 手续费 + 0.1% 滑点；
+- **板块过滤**：可排除创业板（300 开头）、科创板（68 开头）、北交所（4/8 开头）；
+- **高价股过滤**：默认过滤收盘价 > 100 元的股票。
+
+**参数**
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `factor_table` | — | 因子表名（DuckDB） |
+| `trade_freq` | — | 调仓频率（如 `'月度'`） |
+| `bench_index` | `'000002.SH'` | 基准指数 |
+| `sample` | `'全市场'` | 回测样本 |
+| `n_top` | `5` | 每期持仓股票数 |
+| `is_ascending` | `False` | 因子排序方向，`False` 表示因子越大越好 |
+| `commission_rate` | `2.5` | 单边手续费（万分比） |
+| `slippage_rate` | `0.1` | 单边滑点（百分比） |
+| `price_max` | `100.0` | 高价股过滤上限（元） |
+| `filter_boards` | `('创业板','科创板','北交所')` | 排除的板块，传空元组不过滤 |
+
+**输出**
+
+- `factor_mining/{factor_table}/output/trade_holdings.csv`：每期换仓时持仓股票列表；
+- DuckDB 表 `{factor_table}_trade_daily_ret`：日度净值序列（含 `long` 及 `bench_ret` 列），供 `group_plot(mode='trade')` 使用。
+
+#### `compute_portfolio_daily_ret(stk_df, holdings, ...)`
+
+`simulate_trade` 的内部函数，按换仓周期合并日度等权收益，在每期首日扣除**双边交易成本**（仅对实际发生换手的仓位计费）。通过 `joblib` 多线程并行处理各期，最终返回完整日度 `long` 收益序列。
 
 ---
 
@@ -147,9 +217,14 @@ Tushare API
     │
     ▼  factor_analyze.py
 因子评估结果
-  ├── summary.csv         ← IC / IR / Sharpe / 分组收益
-  ├── {factor}_daily_ls   ← 日度多空收益（DuckDB）
-  └── *_curve.png         ← 净值曲线图
+  ├── summary.csv              ← IC / IR / Sharpe / 分组收益
+  ├── {factor}_daily_ls        ← 日度多空收益（DuckDB）
+  └── *_curve.png              ← 净值曲线图
+    │
+    ▼  trade.py
+交易模拟结果
+  ├── trade_holdings.csv       ← 每期换仓持仓记录
+  └── {factor}_trade_daily_ret ← 日度净值序列（DuckDB）
 ```
 
 ---
@@ -159,7 +234,7 @@ Tushare API
 **Python >= 3.12**，依赖见 `pyproject.toml`：
 
 ```
-pandas / numpy / joblib / matplotlib / duckdb / tqdm / tushare / scipy / statsmodels
+pandas / numpy / joblib / matplotlib / duckdb / tqdm / tushare / scipy 
 ```
 
 安装：
@@ -171,6 +246,9 @@ pip install -e .
 配置 Tushare Token（需要2000积分及以上）：
 
 ```bash
-TB_TOKEN=你的token
-
+TS_TOKEN=你的token
 ```
+
+
+
+
