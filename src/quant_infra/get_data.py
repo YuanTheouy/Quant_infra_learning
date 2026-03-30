@@ -203,10 +203,17 @@ def get_dates_todo(table_name,ts_code=None,start_date= START_DATE):
         return sorted(dates_to_download)
 
 def get_basic():
-    """获取股票基本信息，当get_financial()被调用时会自动刷新stock_basic"""
+    """获取股票基本信息，本地有数据且未超过一年则直接返回，否则从 tushare 重新拉取"""
+    last_fetch = get_last_fetch_date('stock_basic')
+    if last_fetch:
+        last_fetch_dt = datetime.strptime(last_fetch, '%Y%m%d')
+        if datetime.now() - last_fetch_dt < timedelta(days=BASIC_RENEW_DAYS):
+            print(f"stock_basic 无需更新，上次更新于 {last_fetch}")
+            return
     pro = _get_pro_client()
     df = pro.stock_basic()
     db_utils.write_to_db(df, 'stock_basic', save_mode='replace')
+    set_last_fetch_date('stock_basic')
     return df
 
 def fetch_finan_by_single_stock(ts_code):

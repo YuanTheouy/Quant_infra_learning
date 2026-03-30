@@ -33,6 +33,8 @@ BASIC_INFO_PATH = 'Data/Metadata'
 FETCH_LOG_PATH = f'{BASIC_INFO_PATH}/fetch_log.csv'
 # 设置更新频率，单位为天。财务数据更新频率较低，所以设置为180天（半年）更新一次。
 FINANCIAL_RENEW_DAYS = 180
+# stock_basic 更新频率，一年更新一次
+BASIC_RENEW_DAYS = 365
 
 # 回测开始时间
 START_DATE = '20160101'
