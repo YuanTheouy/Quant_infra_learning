@@ -58,34 +58,39 @@ def get_trade(start_date, end_date):
     return df
 
 def fetch_bar_by_single_date(date):  ## 增加重试机制，避免偶尔的网络问题导致数据缺失
-    for i in range(4):  # 最多重试4次
+    for i in range(10):  # 增加重试次数到10次
         try:
             pro = _get_pro_client()
             df = pro.daily(trade_date=date)
             if df is not None:
                 df = df[df['pct_chg'].abs() < 35]  # 过滤掉涨跌幅超过35%的异常数据
-                time.sleep(0.8) # 基础积分建议增加睡眠时间
+                # 2000积分：每分钟200次，相当于每次请求平均间隔0.3秒即可。安全起见设置为0.35秒
+                time.sleep(0.35) 
                 return df
         except Exception as e:
-            if "最多访问" in str(e): # 如果是频率限制，多睡一会儿.睡满一分钟后再试（4*15秒）
-                time.sleep(LIMIT_SLEEP_SECONDS)
+            if "最多访问" in str(e) or "超限" in str(e): # 触发任何限流机制
+                # 被限流时多睡一会儿，等待一分钟后状态刷新
+                print(f"日期 {date} 触发限流，等待60秒后重试...")
+                time.sleep(60)
             else:
-                print(f"日期 {date} 第 {i+1} 次尝试失败: {e}") #网络问题，再试一次
+                print(f"日期 {date} 第 {i+1} 次尝试失败: {e}") # 网络问题，再试一次
                 time.sleep(2)
     return None
+
 def fetch_basic_by_single_date(date):  ## 增加重试机制，避免偶尔的网络问题导致数据缺失
-    for i in range(4):  # 最多重试4次
+    for i in range(10):  # 增加重试次数到10次
         try:
             pro = _get_pro_client()
             df = pro.daily_basic(trade_date=date)
             if df is not None:
-                time.sleep(1.5) # 基础积分建议增加睡眠时间
+                time.sleep(0.35) 
                 return df
         except Exception as e:
-            if "最多访问" in str(e): # 如果是频率限制，多睡一会儿.睡满一分钟后再试（4*15秒）
-                time.sleep(LIMIT_SLEEP_SECONDS)
+            if "最多访问" in str(e) or "超限" in str(e):
+                print(f"日期 {date} 触发限流，等待60秒后重试...")
+                time.sleep(60)
             else:
-                print(f"日期 {date} 第 {i+1} 次尝试失败: {e}") #网络问题，再试一次
+                print(f"日期 {date} 第 {i+1} 次尝试失败: {e}") 
                 time.sleep(2)
     return None
 def get_data_by_date(single_function, table_name):
@@ -105,7 +110,8 @@ def get_data_by_date(single_function, table_name):
 
     print(f"正在下载从{(dates_to_download)[0]}到{(dates_to_download)[-1]}的数据")
     
-    results = Parallel(n_jobs=-1)(
+    # 强制改为单线程模式，避免触发 Tushare 的 IP 并发数限制
+    results = Parallel(n_jobs=1, prefer="threads")(
         delayed(single_function)(date) for date in tqdm(dates_to_download, desc="下载进度"))
     
     # 筛选出非空的数据
