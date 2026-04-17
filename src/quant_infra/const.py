@@ -1,3 +1,5 @@
+from pathlib import Path
+
 # 存放常量，如指数代码、频率映射、常数
 
 ## 指数名称与代码转换
@@ -23,14 +25,18 @@ N_SIGMAS = 3
 # 达到api限制后，等待的时间（秒）
 LIMIT_SLEEP_SECONDS = 15
 
+# 项目根目录。固定数据目录位置，避免随运行目录变化。
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+DATA_PATH = PROJECT_ROOT / 'Data'
+
 # 数据库路径常量
-DB_PATH = './Data/data.db'
+DB_PATH = str(DATA_PATH / 'data.db')
 
 # 基础信息存储路径常量
-BASIC_INFO_PATH = 'Data/Metadata'
+BASIC_INFO_PATH = str(DATA_PATH / 'Metadata')
 
 ## 存储财务数据的更新时间（因为获取时间很久，而且财务数据频率较低，所以单独记录更新时间，避免每次运行都更新财务数据）
-FETCH_LOG_PATH = f'{BASIC_INFO_PATH}/fetch_log.csv'
+FETCH_LOG_PATH = str(Path(BASIC_INFO_PATH) / 'fetch_log.csv')
 # 设置更新频率，单位为天。财务数据更新频率较低，所以设置为180天（半年）更新一次。
 FINANCIAL_RENEW_DAYS = 180
 # stock_basic 更新频率，一年更新一次

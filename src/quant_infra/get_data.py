@@ -53,6 +53,7 @@ def get_ins(index_code):
 def get_trade(start_date, end_date):
     """获取交易日历"""
     pro = _get_pro_client()
+    Path(BASIC_INFO_PATH).mkdir(parents=True, exist_ok=True)
     df = pro.trade_cal(exchange='SSE', is_open='1', start_date=start_date, end_date=end_date, fields='cal_date')
     df.to_csv(f'{BASIC_INFO_PATH}/trade_day.csv', index=False)
     return df
@@ -250,6 +251,7 @@ def get_last_fetch_date(table_name):
 def set_last_fetch_date(table_name):
     """将指定表的抓取日期更新为今天，写入 fetch_log.csv"""
     today = datetime.now().strftime('%Y%m%d')
+    Path(FETCH_LOG_PATH).parent.mkdir(parents=True, exist_ok=True)
     if os.path.exists(FETCH_LOG_PATH):
         df = pd.read_csv(FETCH_LOG_PATH, dtype=str)
         df = df[df['table_name'] != table_name] # 删除已有的行,保留别的表的更新时间
@@ -316,5 +318,4 @@ def get_industry():
     # pro = _get_pro_client()
     # df = pro.index_member_all()
     # df.to_csv("test.csv")
-
 
